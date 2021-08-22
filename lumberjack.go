@@ -116,7 +116,7 @@ type Logger struct {
 
 	millCh    chan bool
 	startMill sync.Once
-	prevDate  time.Time
+	prevDate  *time.Time
 }
 
 var (
@@ -160,11 +160,8 @@ func (l *Logger) Write(p []byte) (n int, err error) {
 	}
 
 	if l.RotateEveryday {
-		t := l.getCurrentTime()
-		d := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, nil)
-		if l.prevDate != d {
-			l.rotate()
-			l.prevDate = d
+		if err := l.rotateEveryday(); err != nil {
+			return 0, err
 		}
 	}
 
@@ -479,6 +476,24 @@ func (l *Logger) getCurrentTime() time.Time {
 	} else {
 		return currentTime().UTC()
 	}
+}
+
+func (l *Logger) rotateEveryday() error {
+	t := l.getCurrentTime()
+	d := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
+	// Check for first init previous date
+	if l.prevDate == nil {
+		l.prevDate = &d
+	} else {
+		// Check that we writes data on new date
+		if *l.prevDate != d {
+			l.prevDate = &d
+			if err := l.rotate(); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // compressLogFile compresses the given log file, removing the
