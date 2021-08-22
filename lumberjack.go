@@ -82,6 +82,9 @@ type Logger struct {
 	// os.TempDir() if empty.
 	Filename string `json:"filename" yaml:"filename"`
 
+	// RotateEveryday is flag which told lumberjack to rotate file every day at 00:00.
+	RotateEveryday bool `json:"RotateEveryday" yaml:"rotateeveryday"`
+
 	// MaxSize is the maximum size in megabytes of the log file before it gets
 	// rotated. It defaults to 100 megabytes.
 	MaxSize int `json:"maxsize" yaml:"maxsize"`
@@ -113,6 +116,7 @@ type Logger struct {
 
 	millCh    chan bool
 	startMill sync.Once
+	prevDate  time.Time
 }
 
 var (
@@ -152,6 +156,15 @@ func (l *Logger) Write(p []byte) (n int, err error) {
 	if l.size+writeLen > l.max() {
 		if err := l.rotate(); err != nil {
 			return 0, err
+		}
+	}
+
+	if l.RotateEveryday {
+		t := l.getCurrentTime()
+		d := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, nil)
+		if l.prevDate != d {
+			l.rotate()
+			l.prevDate = d
 		}
 	}
 
@@ -218,7 +231,7 @@ func (l *Logger) openNew() error {
 		// Copy the mode off the old logfile.
 		mode = info.Mode()
 		// move the existing file
-		newname := backupName(name, l.LocalTime)
+		newname := l.backupName(name)
 		if err := os.Rename(name, newname); err != nil {
 			return fmt.Errorf("can't rename log file: %s", err)
 		}
@@ -244,16 +257,12 @@ func (l *Logger) openNew() error {
 // backupName creates a new filename from the given name, inserting a timestamp
 // between the filename and the extension, using the local time if requested
 // (otherwise UTC).
-func backupName(name string, local bool) string {
+func (l *Logger) backupName(name string) string {
 	dir := filepath.Dir(name)
 	filename := filepath.Base(name)
 	ext := filepath.Ext(filename)
 	prefix := filename[:len(filename)-len(ext)]
-	t := currentTime()
-	if !local {
-		t = t.UTC()
-	}
-
+	t := l.getCurrentTime()
 	timestamp := t.Format(backupTimeFormat)
 	return filepath.Join(dir, fmt.Sprintf("%s-%s%s", prefix, timestamp, ext))
 }
@@ -335,7 +344,7 @@ func (l *Logger) millRunOnce() error {
 	}
 	if l.MaxAge > 0 {
 		diff := time.Duration(int64(24*time.Hour) * int64(l.MaxAge))
-		cutoff := currentTime().Add(-1 * diff)
+		cutoff := l.getCurrentTime().Add(-1 * diff)
 
 		var remaining []logInfo
 		for _, f := range files {
@@ -461,6 +470,15 @@ func (l *Logger) prefixAndExt() (prefix, ext string) {
 	ext = filepath.Ext(filename)
 	prefix = filename[:len(filename)-len(ext)] + "-"
 	return prefix, ext
+}
+
+// getCurrentTime returns current time depending on local time flag configuration
+func (l *Logger) getCurrentTime() time.Time {
+	if l.LocalTime {
+		return currentTime()
+	} else {
+		return currentTime().UTC()
+	}
 }
 
 // compressLogFile compresses the given log file, removing the
